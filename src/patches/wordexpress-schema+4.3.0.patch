@@ -1,0 +1,13 @@
+diff --git a/node_modules/wordexpress-schema/lib/schema/schema.js b/node_modules/wordexpress-schema/lib/schema/schema.js
+index 9d8340e..3e3da67 100644
+--- a/node_modules/wordexpress-schema/lib/schema/schema.js
++++ b/node_modules/wordexpress-schema/lib/schema/schema.js
+@@ -32,6 +32,6 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
+ 
+ var RootQuery = '\n  type Query {\n    settings: Setting\n    posts(post_type: [String], limit: Int, skip: Int, order: OrderInput, userId: Int): [Post]\n    post(name: String, id: Int): Post\n    attachments(ids: [Int]): [Thumbnail]\n    postmeta(post_id: Int!, keys: [MetaType]): [Postmeta]\n    menus(name: String!): Menu\n    category(term_id: Int, name: String): Category\n    user(name: String, id: Int): User\n  }\n';
+ 
+-var SchemaDefinition = '\n  schema {\n    query: Query\n  }\n';
++var SchemaDefinition = '\n  schema {\n    query: Query\n    mutation: Mutation\n    subscription: Subscription\n  }\n';
+ 
+ exports.default = [_category2.default, _menu2.default, _metaType2.default, _post2.default, _setting2.default, _orderInput2.default, RootQuery, SchemaDefinition];
+\ No newline at end of file

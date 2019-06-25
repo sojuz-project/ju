@@ -1,0 +1,8 @@
+version: '3.3'
+
+# This file is used only for local development!
+services:
+  graph:
+    ports: 
+    - 4000:4000
+    command: bash -c "yarn && yarn run prepare && yarn run dev"
