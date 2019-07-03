@@ -1,3 +1,34 @@
+diff --git a/node_modules/wordexpress-schema/lib/modules/Thumbnail/shapeThumbnail.js b/node_modules/wordexpress-schema/lib/modules/Thumbnail/shapeThumbnail.js
+index 6107ee2..4a63398 100644
+--- a/node_modules/wordexpress-schema/lib/modules/Thumbnail/shapeThumbnail.js
++++ b/node_modules/wordexpress-schema/lib/modules/Thumbnail/shapeThumbnail.js
+@@ -26,14 +26,18 @@ exports.default = function (thumbnail, settings) {
+ 
+   if (file) {
+     var thumbnailSrc = amazonS3 ? uploads + _phpUnserialize2.default.unserialize(file).key : uploads + file;
+-
+-    var thumbMeta = _phpUnserialize2.default.unserialize(fileMeta);
+-    var sizes = (0, _lodash.map)(thumbMeta.sizes, function (size, key) {
+-      return {
+-        size: key,
+-        file: size.file
+-      };
+-    });
++    var sizes = 0;
++    try {
++      var thumbMeta = _phpUnserialize2.default.unserialize(fileMeta);
++      sizes = (0, _lodash.map)(thumbMeta.sizes, function (size, key) {
++        return {
++          size: key,
++          file: size.file
++        };
++      });
++    } catch (e) {
++      sizes= [];
++    }
+ 
+     return {
+       id: thumbnail.id,
 diff --git a/node_modules/wordexpress-schema/lib/schema/schema.js b/node_modules/wordexpress-schema/lib/schema/schema.js
 index 9d8340e..3e3da67 100644
 --- a/node_modules/wordexpress-schema/lib/schema/schema.js
