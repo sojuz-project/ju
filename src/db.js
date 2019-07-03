@@ -3,16 +3,17 @@ const { WordExpressDatabase } = require('wordexpress-schema');
 const privateSettings = {
     wp_prefix: "wp_",
     database: {
-        name: "wordpress",
-        username: "wordpress",
-        password: "wordpress",
-        host: "db",
+        name: process.env.WORDPRESS_DB_NAME || "wordpress",
+        username: process.env.WORDPRESS_DB_USER || "wordpress",
+        password: process.env.WORDPRESS_DB_PASSWORD || "wordpress",
+        host: process.env.WORDPRESS_DB_HOST || "db",
     }
 };
 
+const uploads = process.env.UPLOADS_PATH.replace(/HOSTNAME/, process.env.HOSTNAME);
+
 const publicSettings = {
-    uploads: `https://${process.env.HOSTNAME}/backend/wp-content/uploads/`,
-    // uploads: "https://docker.local/backend/wp-content/uploads/",
+    uploads,
     amazonS3: false
 };
 

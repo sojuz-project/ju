@@ -6,6 +6,7 @@ services:
     working_dir: "/app"
     networks: 
       - web
+    env_file: .env
     environment: 
       - "NODE_ENV=${ENVIRONMENT}"
       - "HOSTNAME=${HOST}"

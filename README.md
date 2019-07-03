@@ -1,39 +1,37 @@
-# Junction for sojuz project
+# Junction for SOJUZ project
 
 This is the server component for the Zero-theme. It links WordPress database and serves it as GraphQL API.
 
 ## Setup
- 1. Make sure that you have defiend docker network `web`
-    ```
-    docker network ls | grep web
-    ```
-    if the result looks similar to this:
-    ```
-    c3f6d40ce98a        web                      bridge              local
-    ```
-    you're good to continue.
+ 1. To run this component you should have docker network named `web`
     <details>
-    <summary>If not, then create the <code>web</code> network</summary>
-    <pre>
-    docker network create web
-    </pre>
+      <summary>How to check if i have one?</summary>
+      <pre>docker network ls | grep web</pre>
+      the result should look similar to this:
+      <pre>c3f6d40ce98a        web                      bridge              local</pre>
     </details>
- 2. In your `/etc/hosts` file point `docker.local` to `127.0.0.1`
- 3. Rename `.env.sample` file to `.env` and maybe edit it according to your needs
- 4. Run the stack in foreground for the first time:
+    <details>
+    <summary>How to create the <code>web</code> network</summary>
+    <pre>docker network create web</pre>
+    </details>
+ 2. Rename `.env.sample` file to `.env` and maybe change it according to your needs
+    
+    `UPLOADS_PATH` variable can use `HOSTNAME` placeholder which will be replaced with the contents od `HOSTNAME` variable
+ 3. Run the stack in foreground for the first time:
     ```
     docker-compose up
     ```
     The output may contain vital information about what's wrong if anything
- 5. The API server is normally proxied via traefik instance provided by the so part of sojuz project. But for development purposes it listens <sup>override</sup> on port `4000`
+ 4. The API server is normally proxied via traefik instance provided by the [so](https://github.com/sojuz-project/so) part of SOJUZ project. But for development purposes it listens <sup>override</sup> on port `4000`
 
 ## Running
-To startup the server issue appropriate docker-compose command such as:
+To start the server issue appropriate docker-compose command such as (for local development):
 ```
 docker-compose up
 ```
-for debug, or (for production):
+if everything went well it should be avaliable under <sup>OVERRIDE</sup> http://localhost:4000
+
+For production use:
 ```
 docker-compose -f docker-compose.yml up -d
 ```
-if everything went well it should be avaliable under http://docker.local:4000
