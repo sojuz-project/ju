@@ -29,9 +29,10 @@ To start the server issue appropriate docker-compose command such as (for local 
 ```
 docker-compose up
 ```
-if everything went well it should be avaliable under <sup>OVERRIDE</sup> http://localhost:4000
+if everything went well it should be avaliable under <sup>override</sup> http://localhost:4000
 
 For production use:
 ```
 docker-compose -f docker-compose.yml up -d
 ```
+This expects you to have traefik instance which will serve the app on `/graphql` and `/socket` endpoints (based on docker labels defined in `docker-compose.yml` file) 
