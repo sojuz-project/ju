@@ -19,6 +19,7 @@ const ExtraQuery = gql`
     extend type Query {
         options(option_name: String!): Option
         get_cart: JSON
+        get_theme_mod(names: [String!]!): JSON
     }
     input LineItem {
         product_id: Int!
@@ -115,6 +116,44 @@ const ExtraResolvers = {
                     id: userId
                 }
             }).then(d => d.data).catch(e => {throw(e.response.data)});
+        },
+        get_theme_mod: async (_, { names }) => {
+            // console.log(connectors);
+            // console.log(option_name);
+            const ct = await OptionsModel.findOne({
+                where: {
+                    option_name: 'current_theme'
+                }
+            });
+            
+            const currentTheme = String(ct.dataValues.option_value).toLocaleLowerCase();
+            
+            const modsq = await OptionsModel.findOne({
+                where: {
+                    option_name: `theme_mods_${currentTheme}`
+                }
+            })
+            
+            try {
+                const mods = unserialize.unserialize(modsq.dataValues.option_value);
+
+                const ret  = {};
+                
+                if (mods) {
+                    await Promise.all(names.map(async name => {
+                        if (mods[name]) {
+                            if (name == 'custom_logo') {
+                                const imgs = await connectors.getThumbnails([mods[name]]);
+                                ret[name] = imgs.pop();                                
+                            } else {
+                                ret[name] = mods[name];
+                            }
+                        }
+                    }));
+                }
+                return ret;
+            } catch (e) {
+            }
         }
     },
     Mutation: {
