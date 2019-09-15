@@ -1,17 +1,15 @@
 'use strict';
 
-const { Database: Conn } = require('./db');
-
 Object.defineProperty(exports, '__esModule', {
   value: true,
 });
 
 module.exports = function(Conn, prefix) {
-  return Conn.define(prefix + 'options', {
-    option_id: { type: _sequelize2.default.INTEGER, primaryKey: true },
-    option_name: { type: _sequelize2.default.STRING },
-    option_value: { type: _sequelize2.default.STRING },
-    autoload: { type: _sequelize2.default.BOOLEAN },
+  return Conn.define(prefix + 'usermeta', {
+    umeta_id: { type: _sequelize2.default.INTEGER, primaryKey: true, field: 'umeta_id' },
+    user_id: { type: _sequelize2.default.INTEGER },
+    meta_key: { type: _sequelize2.default.STRING },
+    meta_value: { type: _sequelize2.default.INTEGER },
   });
 };
 

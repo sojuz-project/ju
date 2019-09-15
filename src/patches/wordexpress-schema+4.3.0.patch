@@ -1,8 +1,8 @@
 diff --git a/node_modules/wordexpress-schema/lib/modules/Thumbnail/shapeThumbnail.js b/node_modules/wordexpress-schema/lib/modules/Thumbnail/shapeThumbnail.js
-index 6107ee2..4a63398 100644
+index 6107ee2..b62e308 100644
 --- a/node_modules/wordexpress-schema/lib/modules/Thumbnail/shapeThumbnail.js
 +++ b/node_modules/wordexpress-schema/lib/modules/Thumbnail/shapeThumbnail.js
-@@ -26,14 +26,18 @@ exports.default = function (thumbnail, settings) {
+@@ -26,14 +26,23 @@ exports.default = function (thumbnail, settings) {
  
    if (file) {
      var thumbnailSrc = amazonS3 ? uploads + _phpUnserialize2.default.unserialize(file).key : uploads + file;
@@ -14,13 +14,18 @@ index 6107ee2..4a63398 100644
 -        file: size.file
 -      };
 -    });
++    var subDirectory = thumbnailSrc.match(/\d{4}\/\d{2}\//);
 +    var sizes = 0;
 +    try {
 +      var thumbMeta = _phpUnserialize2.default.unserialize(fileMeta);
 +      sizes = (0, _lodash.map)(thumbMeta.sizes, function (size, key) {
++        var baseUri = (subDirectory) ? uploads + subDirectory : uploads;
 +        return {
 +          size: key,
-+          file: size.file
++          file: size.file,
++          url: baseUri + size.file,
++          width: size.width,
++          height: size.height
 +        };
 +      });
 +    } catch (e) {
@@ -29,6 +34,19 @@ index 6107ee2..4a63398 100644
  
      return {
        id: thumbnail.id,
+diff --git a/node_modules/wordexpress-schema/lib/schema/metaType.js b/node_modules/wordexpress-schema/lib/schema/metaType.js
+index 67b1965..77c8695 100644
+--- a/node_modules/wordexpress-schema/lib/schema/metaType.js
++++ b/node_modules/wordexpress-schema/lib/schema/metaType.js
+@@ -3,6 +3,6 @@
+ Object.defineProperty(exports, "__esModule", {
+   value: true
+ });
+-var MetaType = "\n  enum MetaType {\n    _thumbnail_id\n    _wp_attached_file\n    react_layout\n    amazonS3_info\n    order\n  }\n";
++var MetaType = "\n  enum MetaType {\n    _thumbnail_id\n    _wp_attached_file\n    react_layout\n    amazonS3_info\n    order    _menu_item_type\n    _menu_item_menu_item_parent\n    _menu_item_object_id\n    _menu_item_object\n    _menu_item_target\n    _menu_item_classes\n   _menu_item_xfn\n    _menu_item_url\n}\n";
+ 
+ exports.default = MetaType;
+\ No newline at end of file
 diff --git a/node_modules/wordexpress-schema/lib/schema/schema.js b/node_modules/wordexpress-schema/lib/schema/schema.js
 index 9d8340e..3e3da67 100644
 --- a/node_modules/wordexpress-schema/lib/schema/schema.js
@@ -41,4 +59,17 @@ index 9d8340e..3e3da67 100644
 +var SchemaDefinition = '\n  schema {\n    query: Query\n    mutation: Mutation\n    subscription: Subscription\n  }\n';
  
  exports.default = [_category2.default, _menu2.default, _metaType2.default, _post2.default, _setting2.default, _orderInput2.default, RootQuery, SchemaDefinition];
+\ No newline at end of file
+diff --git a/node_modules/wordexpress-schema/lib/schema/thumbnail.js b/node_modules/wordexpress-schema/lib/schema/thumbnail.js
+index e123556..32c33bb 100644
+--- a/node_modules/wordexpress-schema/lib/schema/thumbnail.js
++++ b/node_modules/wordexpress-schema/lib/schema/thumbnail.js
+@@ -5,6 +5,6 @@ Object.defineProperty(exports, "__esModule", {
+ });
+ var Thumbnail = "\n  type Thumbnail {\n    id: Int\n    src: String\n    sizes: [ThumbnailSize]\n  }\n";
+ 
+-var Size = "\n  type ThumbnailSize {\n    size: String,\n    file: String\n  }\n";
++var Size = "\n  type ThumbnailSize {\n    size: String,\n    file: String,\n    url: String\n   width: Int\n    height: Int\n}\n";
+ 
+ exports.default = [Thumbnail, Size];
 \ No newline at end of file
