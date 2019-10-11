@@ -1,3 +1,65 @@
+diff --git a/node_modules/wordexpress-schema/lib/modules/Post/connectors/getPosts.js b/node_modules/wordexpress-schema/lib/modules/Post/connectors/getPosts.js
+index 5e82494..581662c 100644
+--- a/node_modules/wordexpress-schema/lib/modules/Post/connectors/getPosts.js
++++ b/node_modules/wordexpress-schema/lib/modules/Post/connectors/getPosts.js
+@@ -4,15 +4,17 @@ Object.defineProperty(exports, "__esModule", {
+   value: true
+ });
+ 
+-exports.default = function (Post) {
+-  return function (_ref) {
++exports.default = function (Post, Terms, TermRelationships) {
++  return async function (_ref) {
+     var post_type = _ref.post_type,
+         order = _ref.order,
+         _ref$limit = _ref.limit,
+         limit = _ref$limit === undefined ? 10 : _ref$limit,
+         _ref$skip = _ref.skip,
+         skip = _ref$skip === undefined ? 0 : _ref$skip,
+-        userId = _ref.userId;
++        userId = _ref.userId,
++        _refTerms = _ref.terms,
++        terms = _refTerms === undefined ?[] : _ref.terms;
+ 
+     var orderBy = order ? [order.orderBy, order.direction] : ['menu_order', 'ASC'];
+     var where = {
+@@ -28,6 +30,23 @@ exports.default = function (Post) {
+       where.post_author = userId;
+     }
+ 
++    if (terms.length) {
++      const termsRes = await Terms.findAll({
++        where: {
++          slug: _defineProperty({}, Op.in, terms)
++        },
++        include: [{
++          model: TermRelationships
++        }]
++      });
++      const postIds = termsRes.map(({ dataValues: term }) => {
++        return term.wp_term_relationships.map( ({dataValues: relation}) => {
++          return relation.object_id
++        });
++      });
++      where.ID= _defineProperty({}, Op.in, postIds.flat());
++    }
++
+     return Post.findAll({
+       where: where,
+       order: [orderBy],
+diff --git a/node_modules/wordexpress-schema/lib/modules/Post/connectors/index.js b/node_modules/wordexpress-schema/lib/modules/Post/connectors/index.js
+index 870d50e..0e3acbe 100644
+--- a/node_modules/wordexpress-schema/lib/modules/Post/connectors/index.js
++++ b/node_modules/wordexpress-schema/lib/modules/Post/connectors/index.js
+@@ -12,7 +12,7 @@ exports.default = function (_ref, settings) {
+ 
+   return {
+     getPost: (0, _getPost2.default)(Post),
+-    getPosts: (0, _getPosts2.default)(Post),
++    getPosts: (0, _getPosts2.default)(Post, Terms, TermRelationships),
+     getPostTerms: (0, _getPostTerms2.default)(Terms, TermRelationships, settings),
+     getTermPosts: (0, _getTermPosts2.default)(TermRelationships, Post, settings),
+     getPostLayout: (0, _getPostLayout2.default)(Postmeta)
 diff --git a/node_modules/wordexpress-schema/lib/modules/Thumbnail/shapeThumbnail.js b/node_modules/wordexpress-schema/lib/modules/Thumbnail/shapeThumbnail.js
 index 6107ee2..b62e308 100644
 --- a/node_modules/wordexpress-schema/lib/modules/Thumbnail/shapeThumbnail.js
@@ -48,12 +110,15 @@ index 67b1965..77c8695 100644
  exports.default = MetaType;
 \ No newline at end of file
 diff --git a/node_modules/wordexpress-schema/lib/schema/schema.js b/node_modules/wordexpress-schema/lib/schema/schema.js
-index 9d8340e..3e3da67 100644
+index 9d8340e..bf8e94b 100644
 --- a/node_modules/wordexpress-schema/lib/schema/schema.js
 +++ b/node_modules/wordexpress-schema/lib/schema/schema.js
-@@ -32,6 +32,6 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
+@@ -30,8 +30,8 @@ var _orderInput2 = _interopRequireDefault(_orderInput);
  
- var RootQuery = '\n  type Query {\n    settings: Setting\n    posts(post_type: [String], limit: Int, skip: Int, order: OrderInput, userId: Int): [Post]\n    post(name: String, id: Int): Post\n    attachments(ids: [Int]): [Thumbnail]\n    postmeta(post_id: Int!, keys: [MetaType]): [Postmeta]\n    menus(name: String!): Menu\n    category(term_id: Int, name: String): Category\n    user(name: String, id: Int): User\n  }\n';
+ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+ 
+-var RootQuery = '\n  type Query {\n    settings: Setting\n    posts(post_type: [String], limit: Int, skip: Int, order: OrderInput, userId: Int): [Post]\n    post(name: String, id: Int): Post\n    attachments(ids: [Int]): [Thumbnail]\n    postmeta(post_id: Int!, keys: [MetaType]): [Postmeta]\n    menus(name: String!): Menu\n    category(term_id: Int, name: String): Category\n    user(name: String, id: Int): User\n  }\n';
++var RootQuery = '\n  type Query {\n    settings: Setting\n    posts(post_type: [String], limit: Int, skip: Int, order: OrderInput, userId: Int, terms: [String]): [Post]\n    post(name: String, id: Int): Post\n    attachments(ids: [Int]): [Thumbnail]\n    postmeta(post_id: Int!, keys: [MetaType]): [Postmeta]\n    menus(name: String!): Menu\n    category(term_id: Int, name: String): Category\n    user(name: String, id: Int): User\n  }\n';
  
 -var SchemaDefinition = '\n  schema {\n    query: Query\n  }\n';
 +var SchemaDefinition = '\n  schema {\n    query: Query\n    mutation: Mutation\n    subscription: Subscription\n  }\n';

@@ -1,3 +1,4 @@
+/* eslint-disable max-lines */
 const { gql, PubSub, withFilter } = require('apollo-server');
 const { parse: get_blocks } = require('@wordpress/block-serialization-default-parser');
 const GraphQLJSON = require('graphql-type-json');
@@ -9,6 +10,18 @@ const {
 const Options = require('./optionsModel');
 const Usermeta = require('./userMetaModel');
 const unserialize = require('php-unserialize');
+const { getParser } = require('bowser');
+
+const _sequelize = require('sequelize');
+const Op = _sequelize.default.Op;
+function _defineProperty(obj, key, value) {
+  if (key in obj) {
+    Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true });
+  } else {
+    obj[key] = value;
+  }
+  return obj;
+}
 
 const OptionsModel = Options(connection, 'wp_');
 const userMetaModel = Usermeta(connection, 'wp_');
@@ -19,6 +32,9 @@ const axios = require('axios');
 const STOCK = 'stockChannel';
 const pubsub = new PubSub();
 
+const gridBlockParser = require('./gridBlockParser');
+const imgBlockParser = require('./imgBlockParser');
+
 const ExtraQuery = gql`
   scalar JSON
   scalar JSONObject
@@ -26,8 +42,13 @@ const ExtraQuery = gql`
     options(option_name: String!): Option
     get_cart(cart_key: String): JSON
     get_theme_mod(names: [String!]!): JSON
+    get_page(slug: String): Post
     filters(taxonomy: String, ids: String = "", metas: [MetaType]): [FilterResult]
     bookmarks: [Post]!
+    terms(taxonomies: [Int]): [Post]
+    count(post_type: [String], userId: Int, terms: [String]): Int
+    related(post: Int!): [Post]
+    categories(name: String = "category"): [Category]!
   }
   type FilterResult {
     term_id: Int
@@ -83,13 +104,17 @@ const ExtraQuery = gql`
     innerHTML: String
   }
   extend type Post {
-    blocks: [Block]
+    blocks(tagSlug: String, page: Int, catSlug: String, postSlug: String): [Block]
     dataSources: JSON
     likes: Int
+    related: [Post]
   }
   extend type Thumbnail {
     url: String
     colors: [String]!
+  }
+  extend type Category {
+    thumbnail: Thumbnail
   }
 
   extend enum MetaType {
@@ -125,6 +150,8 @@ const ExtraQuery = gql`
     _download_limit
     _download_expire
     linked_item
+    _crosssell_ids
+    _upsell_ids
   }
 `;
 
@@ -137,8 +164,113 @@ const traverse = (ob) => {
   }
 };
 
+const getRelated = async (id) => {
+  const relatedQuery = await connectors.getPostmeta(id, { keys: ['_crosssell_ids'] });
+  if (relatedQuery.length) {
+    const [
+      {
+        dataValues: { meta_value: related },
+      },
+    ] = relatedQuery;
+    const ids = Object.values(unserialize.unserialize(related));
+    return connectors.getPosts(ids);
+  } else return [];
+};
+
 const ExtraResolvers = {
   Query: {
+    async categories(_, { name }) {
+      const [categories] = await connection.query(
+        `
+          SELECT t.*, tm.meta_value AS thumbnail FROM wp_term_taxonomy tt
+          LEFT JOIN wp_terms t ON (tt.term_id = t.term_id)
+          LEFT JOIN wp_termmeta tm ON (tt.term_id = tm.term_id AND tm.meta_key LIKE "thumbnail_id")
+          WHERE tt.taxonomy = :name
+        `,
+        { replacements: { name } }
+      );
+      const thumbnails = await connectors.getThumbnails(categories.map((cat) => cat.thumbnail));
+
+      return categories.map((cat) => ({ ...cat, thumbnail: thumbnails.find(({ id }) => id == cat.thumbnail) }));
+    },
+    async count(_, _ref) {
+      const post_type = _ref.post_type,
+        userId = _ref.userId,
+        terms = _ref.terms;
+
+      const where = {
+        post_status: 'publish',
+        post_type: _defineProperty({}, Op.in, ['post']),
+      };
+
+      if (post_type) {
+        where.post_type = _defineProperty({}, Op.in, post_type);
+      }
+
+      if (userId) {
+        where.post_author = userId;
+      }
+
+      if (terms) {
+        connection.models.wp_terms.hasMany(connection.models.wp_term_relationships, { foreignKey: 'term_taxonomy_id' });
+        connection.models.wp_term_relationships.belongsTo(connection.models.wp_terms, {
+          foreignKey: 'term_taxonomy_id',
+        });
+        const termsRes = await connection.models.wp_terms.findAll({
+          where: {
+            slug: _defineProperty({}, Op.in, terms),
+          },
+          include: [
+            {
+              model: connection.models.wp_term_relationships,
+            },
+          ],
+        });
+        const postIds = termsRes.map(({ dataValues: term }) => {
+          return term.wp_term_relationships.map(({ dataValues: relation }) => {
+            return relation.object_id;
+          });
+        });
+        where.ID = _defineProperty({}, Op.in, postIds.flat());
+      }
+      ret = await connection.models.wp_posts.count({ where });
+      return ret;
+    },
+    terms(_, { taxonomies }) {
+      if (!taxonomies) {
+        return getPosts();
+      }
+
+      let q =
+        'SELECT object_id FROM `wp_term_relationships` WHERE `term_taxonomy_id` IN (:ids) group by object_id having count(*) = :length';
+
+      return Database.connection
+        .query(q, {
+          replacements: {
+            length: taxonomies.length,
+            ids: taxonomies,
+          },
+          // type: _sequelize.QueryTypes.SELECT,
+          // logging: console.log
+        })
+        .then((result) => {
+          return getPosts(result.map((r) => r.object_id));
+        });
+    },
+    get_page: async (_, args, { userAgent }) => {
+      const { slug } = args;
+      // console.log(getParser(userAgent).getPlatformType());
+      let id = false;
+      if (!slug) {
+        const res = await OptionsModel.findOne({
+          where: {
+            option_name: 'page_on_front',
+          },
+        });
+        id = res.dataValues.option_value;
+      }
+      return connectors.getPost(id, slug);
+    },
     options: async (root, { option_name }) => {
       // console.log(option_name);
       const res = await OptionsModel.findOne({
@@ -280,6 +412,9 @@ const ExtraResolvers = {
       } else {
         throw new Error('Not logged in!');
       }
+    },
+    related(_, { post }) {
+      return getRelated(post);
     },
   },
   Mutation: {
@@ -514,11 +649,12 @@ const ExtraResolvers = {
     },
   },
   Post: {
-    blocks: (root) => {
+    blocks: async (root, p, _, { schema }) => {
       const {
         dataValues: { post_content },
       } = root;
-      return get_blocks(post_content);
+      const blocks = get_blocks(post_content);
+      return gridBlockParser(blocks, 'sojuz/block-grid-container', schema, p);
     },
     dataSources: async (root) => {
       const {
@@ -529,13 +665,7 @@ const ExtraResolvers = {
           dataValues: { meta_value: sourcesString },
         },
       ] = await connectors.getPostmeta(post_id, { keys: ['dataSources'] });
-      const sources = sourcesString.split('\n');
-      const dataSrcs = [];
-      for (src in sources) {
-        const res = await axios.get(sources[src]).then((ret) => ret.data);
-        dataSrcs.push(traverse(res));
-      }
-      return dataSrcs;
+      return sourcesString;
     },
     likes: async (root) => {
       return connectors
@@ -556,6 +686,9 @@ const ExtraResolvers = {
         .catch((e) => {
           return 0;
         });
+    },
+    related: ({ dataValues: { id } }) => {
+      return getRelated(id);
     },
   },
   Thumbnail: {
