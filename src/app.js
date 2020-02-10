@@ -33,6 +33,7 @@ const server = new ApolloServer({
             user: { id: userId },
           },
         } = jwt.verify(token, jwtKey);
+        // console.log({ userId });
         return { token, userAgent, userId };
       } catch (e) {
         return { token, userAgent, userId: null };

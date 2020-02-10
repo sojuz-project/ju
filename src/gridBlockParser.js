@@ -1,135 +1,116 @@
 const gqlParser = require('./gqlParser');
+const { gql } = require('apollo-server');
 
-const responsiveIMG = (techC, c, cI) => {
-  return techC[cI].w > 42
-    ? c.sizes.large
-    : techC[cI].w > 25
-    ? c.sizes.halflarge
-    : techC[cI].w > 12
-    ? c.sizes.medium
-    : c.sizes.thumbnail;
-};
+const classMap = (entries) =>
+  Object.entries(entries || {})
+    .map(([key, value]) => `${value}-${key}`)
+    .join(' ');
 
 // eslint-disable-next-line complexity
 const addAttrs = (newAttrs = {}, block = {}, k = 0) => {
-  const { blockName } = newAttrs;
-  const append = {
-    className: classMap(block.attrs.class.component[k]),
-    style: { ...block.attrs.style.component[k] },
-  };
-
-  if (!newAttrs.attrs) newAttrs.attrs = {};
   newAttrs.attrs = {
-    ...newAttrs.attrs,
-    ...append,
+    ...(newAttrs.attrs || {}),
+    className: classMap(block.attrs.class.component[k]),
+    style: block.attrs.style.component[k],
   };
-  const cell = (block.attrs.technical.component[k].h / block.attrs.technical.block.gridTemplateColumns) * 2;
 
-  if (blockName == 'coreheading') {
+  if (newAttrs.blockName == 'coreheading') {
     newAttrs.attrs.tagName = block.attrs.technical.component[k].tagName;
-  }
-  if (blockName == 'customimage') {
+  } else if (newAttrs.blockName == 'customimage') {
+    const cell = (block.attrs.technical.component[k].h / block.attrs.technical.block.gridTemplateColumns) * 2;
+    newAttrs.attrs.style.height = `${cell}vw`;
     newAttrs.attrs.url = newAttrs.url;
+  } else if (newAttrs.blockName == 'customwrapper') {
+    const cell = (block.attrs.technical.component[k].h / block.attrs.technical.block.gridTemplateColumns) * 2;
     newAttrs.attrs.style.height = `${cell}vw`;
-  }
-  if (blockName == 'customwrapper') {
     newAttrs.attrs.reasignTo = block.attrs.technical.component[k].reasignTo;
-    newAttrs.attrs.style.height = `${cell}vw`;
   }
+
   if (block.attrs.data.component[k]) {
     newAttrs.attrs.mapQL = block.attrs.data.component[k].mapQL;
   }
+
   return newAttrs;
 };
-const tplBlock = () => ({
-  blockName: 'core/columns',
-  attrs: {
-    style: {},
-  },
-  innerBlocks: [],
-});
-const classMap = (entries) => {
-  return Object.entries(entries || {})
-    .map(([key, value]) => {
-      return `${value}-${key}`;
-    })
-    .join(' ');
-};
+
 const contentParse = (content, tagName = false) => (tagName ? `<${tagName}>${content}</${tagName}>` : content);
 
-module.exports = (blocks, blockName = '', schema, { page, postSlug, catSlug } = {}) => {
-  // eslint-disable-next-line complexity
-  const value = blocks.map(async (block, i) => {
-    if (block.blockName == blockName) {
-      const skip = ((page || 1) - 1) * block.attrs.content.length;
-      const limit = block.attrs.content.length;
+module.exports = async (blocks, blockName = '', schema, { page, postSlug, catSlug } = {}, ctx) => {
+  const value = await Promise.all(
+    // eslint-disable-next-line complexity
+    blocks.map(async (block, i) => {
+      if (block.blockName == blockName) {
+        const skip = ((page || 1) - 1) * block.attrs.content.length;
+        const limit = block.attrs.content.length;
+        const res = block.attrs.data.block.dataSources
+          ? await gqlParser(
+              schema,
+              block.attrs.data.block.dataSources,
+              {
+                skip,
+                limit,
+                ...(postSlug && { name: postSlug }),
+                ...(catSlug && { terms: catSlug.split(',') }),
+              },
+              ctx
+            )
+          : {};
+        const key = Object.keys(res).pop();
+        const data = key ? res[key] : [];
+        const posts = data && Array.isArray(data) ? data : [data];
 
-      const res = block.attrs.data.block.dataSources
-        ? await gqlParser(schema, block.attrs.data.block.dataSources, {
-            skip,
-            limit,
-            ...(postSlug && { name: postSlug }),
-            ...(catSlug && { terms: catSlug.split(',') }),
-          })
-        : {};
-      // console.log('dataSourcesRes', res);
+        if (block.attrs.data.block.dataSources && data === null) {
+          console.log(block.attrs.data.block.dataSources, data);
+          throw new Error('Empty data'); // Isn't it nice when throwing error doesn't throw an error?
+        }
 
-      const data = res[Object.keys(res).pop()];
-      const posts = Array.isArray(data) ? data : [data];
-
-      if (block.attrs.data.block.dataSources && data === null) {
-        throw 'Empty data';
-      }
-
-      const newBlock = {
-        ...tplBlock(),
-        attrs: {
-          style: {
-            ...block.attrs.style.block,
+        return {
+          blockName: 'core/columns',
+          attrs: {
+            columns: block.attrs.technical.block.gridTemplateColumns,
+            style: block.attrs.style.block,
+            dataSource: block.attrs.data.block.dataSources,
+            className: block.attrs.className,
           },
-          dataSource: block.attrs.data.block.dataSources,
-        },
-      };
-      block.attrs.content.slice(0, posts[0] ? posts.length : block.attrs.content.length).map(
-        (columns, j) =>
-          (newBlock.innerBlocks[j] = {
-            // ...JSON.parse(JSON.stringify(tplBlock)),
-            ...tplBlock(),
-            blockName: `core/column`,
-            attrs: {
-              // ...tplBlock().attrs,
-              style: {
-                // ...tplBlock().attrs.style,
-                ...block.attrs.style.section,
-              },
-            },
-            // eslint-disable-next-line complexity
-            innerBlocks: columns.map((column, k) => ({
-              ...tplBlock(),
-              ...addAttrs(column, block, k),
+          innerBlocks: block.attrs.content
+            .slice(0, block.attrs.data.block.dataSources ? posts.length : block.attrs.content.length)
+            .map((columns, j) => ({
+              blockName: `core/column`,
               attrs: {
-                ...addAttrs(column, block, k).attrs,
-                ...(posts[j] && {
-                  data: posts[j],
-                  ...posts[j].thumbnail,
-                }),
+                style: block.attrs.style.section,
               },
-              ...(posts[j] &&
-                block.attrs.technical.component[k].mapQL &&
-                (column.blockName === 'coreheading' || column.blockName === 'coreparagraph') && {
-                  innerHTML: contentParse(
-                    posts[j][block.attrs.technical.component[k].mapQL],
-                    block.attrs.technical.component[k].tagName
-                  ),
-                }),
+              // eslint-disable-next-line complexity
+              innerBlocks: columns.map((column, k) => {
+                const { attrs: attrsToAdd, blockName = 'core/columns' } = addAttrs(column, block, k);
+
+                return {
+                  blockName,
+                  attrs: {
+                    ...attrsToAdd,
+                    ...(posts[j] && {
+                      data: posts[j],
+                      ...posts[j].thumbnail,
+                    }),
+                    elementWidth:
+                      block.attrs.technical.component[k].w / block.attrs.technical.block.gridTemplateColumns,
+                  },
+                  innerHTML: contentParse(column.innerHTML, block.attrs.technical.component[k].tagName),
+                  ...(posts[j] &&
+                    block.attrs.technical.component[k].mapQL &&
+                    (column.blockName === 'coreheading' || column.blockName === 'coreparagraph') && {
+                      innerHTML: contentParse(
+                        posts[j][block.attrs.technical.component[k].mapQL],
+                        block.attrs.technical.component[k].tagName
+                      ),
+                    }),
+                };
+              }),
             })),
-          })
-      );
-      return newBlock;
-    } else {
-      return block;
-    }
-  });
+        };
+      } else {
+        return block;
+      }
+    })
+  );
   return value;
-  // console.log(blocks, value);
 };

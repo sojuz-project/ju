@@ -1,4 +1,6 @@
 /* eslint-disable max-lines */
+const fs = require('fs');
+const path = require('path');
 const { gql, PubSub, withFilter } = require('apollo-server');
 const { parse: get_blocks } = require('@wordpress/block-serialization-default-parser');
 const GraphQLJSON = require('graphql-type-json');
@@ -9,8 +11,12 @@ const {
 } = require('./db');
 const Options = require('./optionsModel');
 const Usermeta = require('./userMetaModel');
-const unserialize = require('php-unserialize');
+const { unserialize, isSerialized } = require('php-serialize');
+
 const { getParser } = require('bowser');
+
+const { wooQuery, wooMutation, wooSubsctiprion } = require('./woo');
+const { elasticQuery, elasticTypes } = require('./elastic');
 
 const _sequelize = require('sequelize');
 const Op = _sequelize.default.Op;
@@ -27,10 +33,6 @@ const OptionsModel = Options(connection, 'wp_');
 const userMetaModel = Usermeta(connection, 'wp_');
 
 const rest = require('./restClient');
-const axios = require('axios');
-
-const STOCK = 'stockChannel';
-const pubsub = new PubSub();
 
 const gridBlockParser = require('./gridBlockParser');
 const imgBlockParser = require('./imgBlockParser');
@@ -39,7 +41,7 @@ const ExtraQuery = gql`
   scalar JSON
   scalar JSONObject
   extend type Query {
-    options(option_name: String!): Option
+    options(option_names: [String]!): JSONObject
     get_cart(cart_key: String): JSON
     get_theme_mod(names: [String!]!): JSON
     get_page(slug: String): Post
@@ -47,8 +49,48 @@ const ExtraQuery = gql`
     bookmarks: [Post]!
     terms(taxonomies: [Int]): [Post]
     count(post_type: [String], userId: Int, terms: [String]): Int
-    related(post: Int!): [Post]
+    relatedPosts(name: String!): [ElasticPost]
     categories(name: String = "category"): [Category]!
+    get_order(orderId: Int): JSON
+    get_orders: JSON
+    get_payment_methods: JSON
+    get_coupons(cart_key: String!): JSON
+    search(
+      query: String
+      ids: [Int]
+      post_type: String
+      limit: Int
+      skip: Int
+      order: OrderInput
+      parent: Int
+      # userId: Int
+      terms: [String]
+    ): [ElasticPost]
+    queryPost(id: Int, post_name: String, post_type: String, parent: Int): ElasticPost
+    suggest(query: String!, post_type: [String], userId: Int, terms: [String]): SuggestionResult
+    my_profile: Profile
+    get_downloads: [Downloads]
+    form(name: String!): FormSchema
+  }
+  type ElasticPost {
+    ID: Int
+    post_date: String
+    post_content: String
+    post_title: String
+    post_excerpt: String
+    post_status: String
+    post_name: String
+    post_parent: Int
+    menu_order: Int
+    post_type: String
+    likes: Int
+    post_meta(fields: [MetaType]): JSON
+    thumbnail: JSONObject
+    categories: JSON
+    author: [JSON]
+    blocks: [JSON]
+    related: [JSON]
+    children: [ElasticPost]
   }
   type FilterResult {
     term_id: Int
@@ -58,8 +100,28 @@ const ExtraQuery = gql`
     url: String
   }
   input LineItem {
-    product_id: Int!
+    itemKey: String
+    product_id: Int
+    variation_id: Int
     quantity: Int
+  }
+  input Address {
+    first_name: String
+    last_name: String
+    address_1: String
+    address_2: String
+    city: String
+    state: String
+    postcode: String
+    country: String
+    email: String
+    phone: String
+  }
+  input NewOrderInput {
+    payment_method: String!
+    billing: Address
+    shipping: Address
+    line_items: [LineItem!]!
   }
   type Mutation {
     login(username: String!, password: String!): JSONObject!
@@ -68,22 +130,53 @@ const ExtraQuery = gql`
     clear_cart(cart_key: String): JSON
     remove_from_cart(item: String!, cart_key: String): JSON
     update_cart(item: LineItem!, cart_key: String): JSON
-    like(post: Int!): Int
+    like(post: Int!): LikeResponse!
     bookmark(post: Int!): Boolean
+    checkout(order: NewOrderInput): JSON
+    update_profile(user: UserInput): JSON
+    apply_coupon(coupon: String!, cart_key: String!): JSON
+    form(action: String!, fields: JSON): FormResult!
+  }
+  type FormMessage {
+    field: String
+    message: String
+  }
+  type FormResult {
+    status: Int
+    messages: [FormMessage]
+    cb: String
+    data: JSON
+  }
+  type FormSchema {
+    key: String!
+    title: String
+    fields: JSON
+    location: JSON
+    menu_order: Int
+    position: String
+    style: String
+    instruction_placement: String
+    hide_on_screen: String
+    active: Boolean
+    description: String
+    action: String
+    modified: Int
   }
   type Subscription {
     stock_state(products: [Int!]!): StockState
   }
   input UserInput {
-    username: String!
+    username: String
     name: String
     first_name: String
     last_name: String
-    email: String!
+    email: String
     url: String
     description: String
     locale: String
-    password: String!
+    password: String
+    billing: Address
+    shipping: Address
   }
   type StockState {
     product_id: Int!
@@ -108,15 +201,67 @@ const ExtraQuery = gql`
     dataSources: JSON
     likes: Int
     related: [Post]
+    liked: Boolean
+    type: String
   }
   extend type Thumbnail {
     url: String
-    colors: [String]!
+    colors: [String]
   }
   extend type Category {
     thumbnail: Thumbnail
   }
 
+  type LikeResponse {
+    likes: Int!
+    liked: Boolean!
+  }
+
+  type AddressData {
+    first_name: String!
+    last_name: String!
+    address_1: String!
+    address_2: String
+    city: String!
+    state: String
+    postcode: String!
+    country: String!
+    email: String!
+    phone: String!
+  }
+
+  type Profile {
+    id: Int!
+    date_created: String
+    date_created_gmt: String
+    date_modified: String
+    date_modified_gmt: String
+    email: String
+    first_name: String
+    last_name: String
+    role: String
+    username: String
+    billing: AddressData
+    shipping: AddressData
+    is_paying_customer: Boolean
+    avatar_url: String
+    meta_data: JSON
+  }
+
+  type Downloads {
+    download_id: String
+    download_url: String
+    product_id: Int
+    product_name: String
+    download_name: String
+    order_id: Int
+    order_key: String
+    downloads_remaining: Int
+    access_expires: String
+    access_expires_gmt: String
+    file: JSON
+    _links: JSON
+  }
   extend enum MetaType {
     _price
     _stock_status
@@ -152,6 +297,28 @@ const ExtraQuery = gql`
     linked_item
     _crosssell_ids
     _upsell_ids
+    _menu_item_component
+    _menu_item_component_attrs
+    image_meta
+    location
+    fullLocation
+    _wp_attachment_metadata
+    acf_schema
+  }
+  type suggestion {
+    text: String!
+    score: Float
+    freq: Int
+  }
+  type suggestions {
+    text: String
+    offset: Int
+    length: Int
+    options: [suggestion]
+  }
+  type SuggestionResult {
+    post_content: [suggestions]
+    post_title: [suggestions]
   }
 `;
 
@@ -172,8 +339,8 @@ const getRelated = async (id) => {
         dataValues: { meta_value: related },
       },
     ] = relatedQuery;
-    const ids = Object.values(unserialize.unserialize(related));
-    return connectors.getPosts(ids);
+    const ids = Object.values(unserialize(related));
+    return connectors.getPosts({ ids, post_type: ['product'] });
   } else return [];
 };
 
@@ -182,7 +349,7 @@ const ExtraResolvers = {
     async categories(_, { name }) {
       const [categories] = await connection.query(
         `
-          SELECT t.*, tm.meta_value AS thumbnail FROM wp_term_taxonomy tt
+          SELECT t.*, tm.meta_value AS thumbnail, tt.taxonomy as type FROM wp_term_taxonomy tt
           LEFT JOIN wp_terms t ON (tt.term_id = t.term_id)
           LEFT JOIN wp_termmeta tm ON (tt.term_id = tm.term_id AND tm.meta_key LIKE "thumbnail_id")
           WHERE tt.taxonomy = :name
@@ -196,7 +363,7 @@ const ExtraResolvers = {
     async count(_, _ref) {
       const post_type = _ref.post_type,
         userId = _ref.userId,
-        terms = _ref.terms;
+        terms = _ref.terms ? _ref.terms : [];
 
       const where = {
         post_status: 'publish',
@@ -211,7 +378,7 @@ const ExtraResolvers = {
         where.post_author = userId;
       }
 
-      if (terms) {
+      if (terms.length) {
         connection.models.wp_terms.hasMany(connection.models.wp_term_relationships, { foreignKey: 'term_taxonomy_id' });
         connection.models.wp_term_relationships.belongsTo(connection.models.wp_terms, {
           foreignKey: 'term_taxonomy_id',
@@ -254,7 +421,7 @@ const ExtraResolvers = {
           // logging: console.log
         })
         .then((result) => {
-          return getPosts(result.map((r) => r.object_id));
+          return getPosts({ ids: result.map((r) => r.object_id) });
         });
     },
     get_page: async (_, args, { userAgent }) => {
@@ -271,60 +438,36 @@ const ExtraResolvers = {
       }
       return connectors.getPost(id, slug);
     },
-    options: async (root, { option_name }) => {
+    options: async (root, { option_names }) => {
       // console.log(option_name);
-      const res = await OptionsModel.findOne({
+      const res = await OptionsModel.findAll({
         where: {
-          option_name,
+          option_name: _defineProperty({}, Op.in, option_names),
         },
       });
 
-      try {
-        res.dataValues.option_value = unserialize.unserialize(res.dataValues.option_value);
-      } catch (e) {}
-      return res.dataValues;
-    },
-    get_cart: (_, { cart_key }, { token, userId }) => {
-      if (cart_key) {
-        const query = 'SELECT * FROM `wp_woocommerce_sessions` WHERE `session_key` LIKE ":sessionKey"';
+      const ret = {};
+      res.map((row) => {
+        const {
+          dataValues: { option_name: option, option_value: value },
+        } = row;
+        const retOpt = isSerialized(value) ? unserialize(value) : value;
+        ret[option] = retOpt;
+      });
 
-        return connection
-          .query(query, {
-            replacements: {
-              sessionKey: cart_key,
-            },
-            //   type: _sequelize.QueryTypes.SELECT,
-            logging: console.log,
-          })
-          .then((result) => {
-            console.log('dbRes', result);
-            return [];
-          });
-      }
-
-      const config = {
-        params: {
-          id: userId,
-        },
-        withCredentials: true,
-      };
-      if (cart_key) {
-        const reqCookies = cart_key ? cart_key.split('|') : [];
-        console.log(reqCookies);
-        config.headers = {
-          Cookie: reqCookies.join('; '),
-        };
-        delete config.params;
-      }
-      return rest(token)
-        .get(`/cocart/v1/get-cart`, config)
-        .then((d) => {
-          return d.data;
-        })
-        .catch((e) => {
-          throw e.response.data;
-        });
+      return ret;
     },
+    form: (_, { name }) => {
+      const schemaFile = path.join('/', 'acfSchema', name + '.json');
+      const schemaExists = fs.existsSync(schemaFile);
+      if (schemaExists) {
+        return require(schemaFile);
+      } else {
+        return new Error('Schema does not exist');
+      }
+    },
+    ...wooQuery,
+    ...elasticQuery,
     get_theme_mod: async (_, { names }) => {
       // console.log(connectors);
       // console.log(option_name);
@@ -343,7 +486,7 @@ const ExtraResolvers = {
       });
 
       try {
-        const mods = unserialize.unserialize(modsq.dataValues.option_value);
+        const mods = unserialize(modsq.dataValues.option_value);
 
         const ret = {};
 
@@ -351,11 +494,26 @@ const ExtraResolvers = {
           await Promise.all(
             names.map(async (name) => {
               if (mods[name]) {
-                if (name == 'custom_logo') {
-                  const imgs = await connectors.getThumbnails([mods[name]]);
-                  ret[name] = imgs.pop();
-                } else {
-                  ret[name] = mods[name];
+                switch (name) {
+                  case 'custom_logo':
+                    const imgs = await connectors.getThumbnails([mods[name]]);
+                    ret[name] = imgs.pop();
+                    break;
+                  case 'nav_menu_locations':
+                    const menuLocs = {};
+                    const locations = Object.keys(mods[name]);
+                    await Promise.all(
+                      locations.map(async (key) => {
+                        const {
+                          dataValues: { slug },
+                        } = await connectors.getTerm(mods[name][key]);
+                        menuLocs[key] = slug;
+                      })
+                    );
+                    ret[name] = menuLocs;
+                    break;
+                  default:
+                    ret[name] = mods[name];
                 }
               }
             })
@@ -389,33 +547,40 @@ const ExtraResolvers = {
           return filters;
         });
     },
-    bookmarks(_, __, { userId }) {
+    async bookmarks(_, __, { userId }) {
       if (userId) {
-        return userMetaModel
-          .findOne({
+        let result = [];
+        try {
+          const {
+            dataValues: { meta_value: metadata },
+          } = await userMetaModel.findOne({
             where: {
               user_id: userId,
               meta_key: 'bookmarks',
             },
             // logging: console.log,
-          })
-          .then((ret) => {
-            const {
-              dataValues: { umeta_id, meta_value: metadata },
-            } = ret;
-            const bookmarksOb = JSON.parse(metadata);
-            return bookmarksOb.map((id) => connectors.getPost(id));
-          })
-          .catch((e) => {
-            return [];
           });
+
+          result = Promise.all(JSON.parse(metadata).map(connectors.getPost));
+        } catch (e) {}
+
+        return result;
       } else {
         throw new Error('Not logged in!');
       }
     },
-    related(_, { post }) {
-      return getRelated(post);
-    },
+    // relatedPosts: async (_, { name }) => {
+    //   const res = await connection.models.wp_posts.findOne({
+    //     attributes: ['ID'],
+    //     where: {
+    //       post_name: name,
+    //     },
+    //   });
+    //   const {
+    //     dataValues: { ID },
+    //   } = res;
+    //   return getRelated(ID);
+    // },
   },
   Mutation: {
     login: (_, { username, password }) => {
@@ -430,112 +595,15 @@ const ExtraResolvers = {
           throw e.response.data;
         });
     },
-    register: (_, { user: userData }) => {
-      return rest()
-        .post('/wp/v2/users', userData)
-        .then((ret) => ret.data)
-        .catch((e) => {
-          throw e.response.data;
-        });
-    },
-    add_to_cart: (_, { item, cart_key }, { token }) => {
-      connectors
-        .getPostmeta(item.product_id, { keys: ['_stock' /* , '_stock_status', '_product_lock' */] })
-        .then((ret) => {
-          const [
-            {
-              dataValues: { meta_value: metas },
-            },
-          ] = ret;
-          const message = {
-            product_id: item.product_id,
-            quantity: parseFloat(metas) - item.quantity,
-            status: parseFloat(metas) > 0 ? 'instock' : 'outofstock',
-            locked: Math.floor(Date.now() / 1000),
-          };
-          // console.log(message);
-          pubsub.publish(STOCK, { stock_state: message });
-        })
-        .catch((e) => console.log(e));
-      const config = {};
-      // const reqCookies = cart_key ? cart_key.split('|') : [];
-      // // console.log(cart_key.replace('|',';'))
-      // if (cart_key) {
-      //   config.headers = {
-      //     Cookie: reqCookies.join('; '),
-      //   };
-      // }
-      return rest(token)
-        .post('/cocart/v1/add-item', { ...item, return_cart: true }, config)
-        .then((res) => {
-          // const cookies = {}
-          for (i in res.headers['set-cookie']) {
-            const cookie = res.headers['set-cookie'][i].split(';')[0];
-            if (cookie.includes('wp_woocommerce_session')) {
-              const val = cookie.split('=').pop();
-              res.data['cookies'] = val.split('%7C%7C')[0];
-            }
-            // if (cookie.includes('woocommerce_cart_hash')
-            //     || cookie.includes('wp_woocommerce_session')
-            //     || cookie.includes('woocommerce_items_in_cart')
-            // )  {
-            //     const [ name, value ] = cookie.split('=')
-            //     cookies[name] = value
-            // }
-          }
-          // res.data['cookies'] = cookies
-          return res.data;
-        })
-        .catch((e) => {
-          throw e;
-        });
-    },
-    remove_from_cart: (_, { item, cart_key }, { token }) => {
-      const config = {
-        params: {
-          cart_item_key: item,
-        },
-      };
-      if (cart_key) {
-        config.headers = {
-          Cookie: cart_key,
-        };
-      }
-      return rest(token)
-        .delete('/cocart/v1/item', config)
-        .then((res) => res.data)
-        .catch((e) => {
-          throw e.response.data;
-        });
-    },
-    update_cart: (_, { item, cart_key }, { token }) => {
-      const config = {};
-      if (cart_key) {
-        config.headers = {
-          Cookie: cart_key,
-        };
-      }
-      return rest(token)
-        .post('/cocart/v1/item', item, config)
-        .then((res) => res.data)
-        .catch((e) => {
-          throw e.response.data;
-        });
-    },
-    clear_cart: (_, { cart_key }, { token }) => {
-      const config = {};
-      if (cart_key) {
-        config.headers = {
-          Cookie: cart_key,
-        };
-      }
-      return rest(token)
-        .post('/cocart/v1/clear', {}, config)
-        .then((res) => res.data)
-        .catch((e) => {
-          throw e.response.data;
-        });
-    },
+    // register: (_, { user: userData }) => {
+    //   return rest()
+    //     .post('/wp/v2/users', userData)
+    //     .then((ret) => ret.data)
+    //     .catch((e) => {
+    //       throw e.response.data;
+    //     });
+    // },
+    ...wooMutation,
     like: async (_, { post }, { userId }) => {
       // console.log(connection.models.wp_postmeta);
       if (userId) {
@@ -544,6 +612,7 @@ const ExtraResolvers = {
           .getPostmeta(post, { keys: ['post_likes'] })
           .then((ret) => {
             let newLikes = [];
+            let liked = false;
             if (ret.length) {
               // got likes
               const [
@@ -559,6 +628,7 @@ const ExtraResolvers = {
                 newLikes = likesOb;
               } else {
                 // like
+                liked = true;
                 newLikes = [...likesOb, userID];
               }
               connection.models.wp_postmeta.update(
@@ -569,17 +639,21 @@ const ExtraResolvers = {
                   where: { meta_id },
                 }
               );
-              return newLikes.length;
             } else {
               // no likes, create one
+              liked = true;
               newLikes = [parseInt(userId)];
               connection.models.wp_postmeta.create({
                 post_id: post,
                 meta_key: 'post_likes',
                 meta_value: JSON.stringify(newLikes),
               });
-              return 1;
             }
+
+            return {
+              likes: newLikes.length,
+              liked,
+            };
           })
           .catch((e) => console.log(e));
       } else {
@@ -599,6 +673,7 @@ const ExtraResolvers = {
           })
           .then((ret) => {
             let newLikes = [];
+            let newBookmarkValue;
             console.log(ret.dataValues);
             // got bookmarks
             const {
@@ -609,9 +684,11 @@ const ExtraResolvers = {
               // unlike
               bookmarksOb.splice(bookmarksOb.indexOf(post), 1);
               newLikes = bookmarksOb;
+              newBookmarkValue = false;
             } else {
               // like
               newLikes = [...bookmarksOb, post];
+              newBookmarkValue = true;
             }
             userMetaModel.update(
               {
@@ -621,7 +698,7 @@ const ExtraResolvers = {
                 where: { umeta_id },
               }
             );
-            return true;
+            return newBookmarkValue;
           })
           .catch((e) => {
             // no bookmarks, create one
@@ -637,24 +714,70 @@ const ExtraResolvers = {
         throw new Error('Not logged in!');
       }
     },
-  },
-  Subscription: {
-    stock_state: {
-      subscribe: withFilter(
-        () => pubsub.asyncIterator([STOCK]),
-        ({ stock_state: { product_id } }, { products }) => {
-          return products.includes(product_id);
-        }
-      ),
+    form: (_, { action, fields }) => {
+      const builtInActions = Object.keys(ExtraResolvers.Mutation);
+      const params = JSON.parse(fields);
+      let data = false;
+      // console.log('FM', builtInActions, params);
+      if (builtInActions.includes(action)) {
+        data = ExtraResolvers.Mutation[action](_, params);
+        return {
+          status: 200,
+          messages: [],
+          cb: action,
+          data: data,
+        };
+        // console.log(data);
+      } else {
+        const axios = require('axios');
+        const { stringify } = require('querystring');
+        return axios
+          .post(
+            'http://wordpress/backend/wp-admin/admin-ajax.php',
+            stringify({
+              ...params,
+              action,
+            }),
+            {
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+              },
+            }
+          )
+          .then((res) => {
+            return {
+              status: res.status,
+              messages: [data.data],
+              cb: action,
+              data: res.data,
+            };
+          })
+          .catch((e) => {
+            return {
+              status: e.status,
+              messages: [e.data],
+              cb: action,
+              data: e.data,
+            };
+          });
+      }
     },
   },
+  Subscription: {
+    ...wooSubsctiprion,
+  },
   Post: {
-    blocks: async (root, p, _, { schema }) => {
-      const {
-        dataValues: { post_content },
-      } = root;
-      const blocks = get_blocks(post_content);
-      return gridBlockParser(blocks, 'sojuz/block-grid-container', schema, p);
+    blocks: async (root, args, ctx, { schema }) => {
+      var blocks;
+      if (root.dataValues) {
+        const {
+          dataValues: { post_content },
+        } = root;
+        blocks = get_blocks(post_content);
+      } else {
+        blocks = root.blocks;
+      }
+      return gridBlockParser(blocks, 'sojuz/block-grid-container', schema, args, ctx);
     },
     dataSources: async (root) => {
       const {
@@ -690,6 +813,30 @@ const ExtraResolvers = {
     related: ({ dataValues: { id } }) => {
       return getRelated(id);
     },
+    liked: ({ dataValues: { id } }, _, ctx) => {
+      const { userId } = ctx || {};
+      return connectors
+        .getPostmeta(id, { keys: ['post_likes'] })
+        .then((ret) => {
+          if (ret) {
+            const [
+              {
+                dataValues: { meta_value: metadata },
+              },
+            ] = ret;
+            const likesOb = JSON.parse(metadata);
+            return likesOb.includes(parseInt(userId));
+          } else {
+            return false;
+          }
+        })
+        .catch((e) => {
+          return false;
+        });
+    },
+    type: ({ dataValues: { post_type } }) => {
+      return post_type;
+    },
   },
   Thumbnail: {
     url: (root) => root.src,
@@ -702,12 +849,21 @@ const ExtraResolvers = {
               dataValues: { meta_value: metadata },
             },
           ] = ret;
-          const parsed = unserialize.unserialize(metadata);
+          const parsed = unserialize(metadata);
           return parsed.colors ? Object.keys(parsed.colors).map((color) => `#${color}`) : [];
         })
         .catch((e) => console.log(e));
     },
   },
+  Downloads: {
+    _links: (root) => {
+      for (const key in root._links) {
+        root._links[key] = root._links[key].pop().href;
+      }
+      return root._links;
+    },
+  },
+  ...elasticTypes,
   JSON: GraphQLJSON,
   JSONObject: GraphQLJSONObject,
 };

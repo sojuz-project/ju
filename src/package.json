@@ -4,24 +4,24 @@
   "main": "app.js",
   "license": "MIT",
   "dependencies": {
+    "@woocommerce/woocommerce-rest-api": "^1.0.1",
     "@wordpress/block-serialization-default-parser": "^3.2.0",
     "apollo-server": "^2.6.2",
     "axios": "^0.19.0",
     "bowser": "^2.7.0",
+    "elasticsearch": "^16.4.0",
     "graphql": "^14.3.1",
     "graphql-type-json": "^0.3.0",
     "jsonwebtoken": "^8.5.1",
+    "patch-package": "^6.1.2",
     "lodash.merge": "^4.6.2",
-    "php-unserialize": "^0.0.1",
-    "wordexpress-schema": "^4.3.0"
+    "php-serialize": "^3.0.1",
+    "wordexpress-schema": "^4.3.0",
+    "postinstall-prepare": "^1.0.1"
   },
   "scripts": {
     "dev": "./node_modules/nodemon/bin/nodemon.js app.js",
     "start": "node app.js",
     "prepare": "patch-package"
-  },
-  "devDependencies": {
-    "patch-package": "^6.1.2",
-    "postinstall-prepare": "^1.0.1"
   }
 }

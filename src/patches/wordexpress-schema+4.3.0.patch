@@ -1,8 +1,80 @@
+diff --git a/node_modules/wordexpress-schema/lib/db.js b/node_modules/wordexpress-schema/lib/db.js
+index 9ae232d..33bcd13 100644
+--- a/node_modules/wordexpress-schema/lib/db.js
++++ b/node_modules/wordexpress-schema/lib/db.js
+@@ -116,11 +116,14 @@ var WordExpressDatabase = function () {
+       var Post = models.Post,
+           Postmeta = models.Postmeta,
+           Terms = models.Terms,
+-          TermRelationships = models.TermRelationships;
++          TermRelationships = models.TermRelationships,
++          TermTaxonomy = models.TermTaxonomy;
+ 
+ 
+       Terms.hasMany(TermRelationships, { foreignKey: 'term_taxonomy_id' });
+       TermRelationships.belongsTo(Terms, { foreignKey: 'term_taxonomy_id' });
++      TermTaxonomy.hasMany(Terms, {foreignKey: 'term_id' });
++      Terms.belongsTo(TermTaxonomy, { foreignKey: 'term_id' });
+ 
+       TermRelationships.hasMany(Postmeta, { foreignKey: 'post_id' });
+       Postmeta.belongsTo(TermRelationships, { foreignKey: 'post_id' });
+diff --git a/node_modules/wordexpress-schema/lib/modules/Post/connectors/getPostTerms.js b/node_modules/wordexpress-schema/lib/modules/Post/connectors/getPostTerms.js
+index b552ee4..122fbe7 100644
+--- a/node_modules/wordexpress-schema/lib/modules/Post/connectors/getPostTerms.js
++++ b/node_modules/wordexpress-schema/lib/modules/Post/connectors/getPostTerms.js
+@@ -4,21 +4,33 @@ Object.defineProperty(exports, "__esModule", {
+   value: true
+ });
+ 
+-exports.default = function (Terms, TermRelationships, settings) {
+-  var wp_prefix = settings.privateSettings.wp_prefix;
+-
++const Sequelize = require('sequelize');
++const Op = Sequelize.Op
+ 
+-  return function (postId) {
+-    return TermRelationships.findAll({
+-      where: {
+-        object_id: postId
+-      },
+-      include: [{
+-        model: Terms
+-      }]
+-    }).then(function (relationships) {
+-      return relationships.map(function (r) {
+-        return r.dataValues[wp_prefix + "term"];
++exports.default = function (Terms, TermRelationships, TermTaxonomy, settings) {
++  var wp_prefix = settings.privateSettings.wp_prefix;
++  return function (postId, taxonomy) {
++    return Terms.findAll({
++      include: [
++        {
++          model: TermRelationships,
++          where: {
++            object_id: postId,
++          },
++        },
++        {
++          model: TermTaxonomy,
++          where: {
++            taxonomy: {
++              [Op.like]: taxonomy
++            }
++          }
++        }
++      ]
++      }
++    ).then(data => {
++      return data.map(function (r) {
++        return r.dataValues;
+       });
+     });
+   };
 diff --git a/node_modules/wordexpress-schema/lib/modules/Post/connectors/getPosts.js b/node_modules/wordexpress-schema/lib/modules/Post/connectors/getPosts.js
-index 5e82494..581662c 100644
+index 5e82494..e08fd56 100644
 --- a/node_modules/wordexpress-schema/lib/modules/Post/connectors/getPosts.js
 +++ b/node_modules/wordexpress-schema/lib/modules/Post/connectors/getPosts.js
-@@ -4,15 +4,17 @@ Object.defineProperty(exports, "__esModule", {
+@@ -4,15 +4,19 @@ Object.defineProperty(exports, "__esModule", {
    value: true
  });
  
@@ -19,11 +91,13 @@ index 5e82494..581662c 100644
 -        userId = _ref.userId;
 +        userId = _ref.userId,
 +        _refTerms = _ref.terms,
-+        terms = _refTerms === undefined ?[] : _ref.terms;
++        terms = _refTerms === undefined ?[] : _ref.terms,
++        _refIDs = _ref.ids,
++        postIDs = _refIDs === undefined ? [] : _ref.ids;
  
      var orderBy = order ? [order.orderBy, order.direction] : ['menu_order', 'ASC'];
      var where = {
-@@ -28,6 +30,23 @@ exports.default = function (Post) {
+@@ -28,6 +32,27 @@ exports.default = function (Post) {
        where.post_author = userId;
      }
  
@@ -44,22 +118,75 @@ index 5e82494..581662c 100644
 +      where.ID= _defineProperty({}, Op.in, postIds.flat());
 +    }
 +
++    if (postIDs.length) {
++      where.ID= _defineProperty({}, Op.in, postIDs);
++    }
++
      return Post.findAll({
        where: where,
        order: [orderBy],
 diff --git a/node_modules/wordexpress-schema/lib/modules/Post/connectors/index.js b/node_modules/wordexpress-schema/lib/modules/Post/connectors/index.js
-index 870d50e..0e3acbe 100644
+index 870d50e..8b23357 100644
 --- a/node_modules/wordexpress-schema/lib/modules/Post/connectors/index.js
 +++ b/node_modules/wordexpress-schema/lib/modules/Post/connectors/index.js
-@@ -12,7 +12,7 @@ exports.default = function (_ref, settings) {
+@@ -8,12 +8,13 @@ exports.default = function (_ref, settings) {
+   var Post = _ref.Post,
+       Postmeta = _ref.Postmeta,
+       Terms = _ref.Terms,
+-      TermRelationships = _ref.TermRelationships;
++      TermRelationships = _ref.TermRelationships,
++      TermTaxonomy = _ref.TermTaxonomy;
  
    return {
      getPost: (0, _getPost2.default)(Post),
 -    getPosts: (0, _getPosts2.default)(Post),
+-    getPostTerms: (0, _getPostTerms2.default)(Terms, TermRelationships, settings),
 +    getPosts: (0, _getPosts2.default)(Post, Terms, TermRelationships),
-     getPostTerms: (0, _getPostTerms2.default)(Terms, TermRelationships, settings),
++    getPostTerms: (0, _getPostTerms2.default)(Terms, TermRelationships, TermTaxonomy, settings),
      getTermPosts: (0, _getTermPosts2.default)(TermRelationships, Post, settings),
      getPostLayout: (0, _getPostLayout2.default)(Postmeta)
+   };
+diff --git a/node_modules/wordexpress-schema/lib/modules/Term/connectors/getTerm.js b/node_modules/wordexpress-schema/lib/modules/Term/connectors/getTerm.js
+index b0128fb..1dc7305 100644
+--- a/node_modules/wordexpress-schema/lib/modules/Term/connectors/getTerm.js
++++ b/node_modules/wordexpress-schema/lib/modules/Term/connectors/getTerm.js
+@@ -4,10 +4,16 @@ Object.defineProperty(exports, "__esModule", {
+   value: true
+ });
+ 
+-exports.default = function (Terms) {
++exports.default = function (Terms, TermTaxonomy) {
+   return function (termId, name) {
+     return Terms.findOne({
+-      where: _defineProperty({}, Op.or, [{ term_id: termId }, { name: name }])
++      where: _defineProperty({}, Op.or, [{ term_id: termId }, { name: name }]),
++      include: [
++        {
++          model: TermTaxonomy
++        }
++      ],
++      logging: console.log
+     });
+   };
+ };
+diff --git a/node_modules/wordexpress-schema/lib/modules/Term/connectors/index.js b/node_modules/wordexpress-schema/lib/modules/Term/connectors/index.js
+index 15d8dd7..042b61e 100644
+--- a/node_modules/wordexpress-schema/lib/modules/Term/connectors/index.js
++++ b/node_modules/wordexpress-schema/lib/modules/Term/connectors/index.js
+@@ -5,10 +5,11 @@ Object.defineProperty(exports, "__esModule", {
+ });
+ 
+ exports.default = function (_ref) {
+-  var Terms = _ref.Terms;
++  var Terms = _ref.Terms,
++    TermTaxonomy = _ref.TermTaxonomy;
+ 
+   return {
+-    getTerm: (0, _getTerm2.default)(Terms)
++    getTerm: (0, _getTerm2.default)(Terms, TermTaxonomy)
+   };
+ };
+ 
 diff --git a/node_modules/wordexpress-schema/lib/modules/Thumbnail/shapeThumbnail.js b/node_modules/wordexpress-schema/lib/modules/Thumbnail/shapeThumbnail.js
 index 6107ee2..b62e308 100644
 --- a/node_modules/wordexpress-schema/lib/modules/Thumbnail/shapeThumbnail.js
@@ -96,6 +223,43 @@ index 6107ee2..b62e308 100644
  
      return {
        id: thumbnail.id,
+diff --git a/node_modules/wordexpress-schema/lib/resolvers.js b/node_modules/wordexpress-schema/lib/resolvers.js
+index e269854..27f40fb 100644
+--- a/node_modules/wordexpress-schema/lib/resolvers.js
++++ b/node_modules/wordexpress-schema/lib/resolvers.js
+@@ -54,7 +54,7 @@ function WordExpressResolvers(Connectors, publicSettings) {
+     Category: {
+       posts: function posts(category, args) {
+         return Connectors.getTermPosts(category.term_id, args);
+-      }
++      },
+     },
+     Post: {
+       layout: function layout(post) {
+@@ -69,8 +69,8 @@ function WordExpressResolvers(Connectors, publicSettings) {
+       author: function author(post) {
+         return Connectors.getUser({ userId: post.post_author });
+       },
+-      categories: function categories(post) {
+-        return Connectors.getPostTerms(post.id);
++      categories: function categories(post, { taxonomy }) {
++        return Connectors.getPostTerms(post.id, taxonomy);
+       }
+     },
+     Postmeta: {
+diff --git a/node_modules/wordexpress-schema/lib/schema/category.js b/node_modules/wordexpress-schema/lib/schema/category.js
+index 74c9151..3652da2 100644
+--- a/node_modules/wordexpress-schema/lib/schema/category.js
++++ b/node_modules/wordexpress-schema/lib/schema/category.js
+@@ -10,7 +10,7 @@ var _post2 = _interopRequireDefault(_post);
+ 
+ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+ 
+-var Category = '\n  type Category {\n    term_id: Int!\n    name: String\n    slug: String\n    posts(post_type: String = "post", limit: Int, skip: Int, order: OrderInput): [Post]\n  }\n';
++var Category = '\n  type Category {\n    term_id: Int!\n    name: String\n    slug: String\n    posts(post_type: String = "post", limit: Int, skip: Int, order: OrderInput): [Post]\n   type: String\n  }\n';
+ 
+ exports.default = function () {
+   return [Category, _post2.default];
 diff --git a/node_modules/wordexpress-schema/lib/schema/metaType.js b/node_modules/wordexpress-schema/lib/schema/metaType.js
 index 67b1965..77c8695 100644
 --- a/node_modules/wordexpress-schema/lib/schema/metaType.js
@@ -109,6 +273,19 @@ index 67b1965..77c8695 100644
  
  exports.default = MetaType;
 \ No newline at end of file
+diff --git a/node_modules/wordexpress-schema/lib/schema/post.js b/node_modules/wordexpress-schema/lib/schema/post.js
+index 10fd1f4..3a8d473 100644
+--- a/node_modules/wordexpress-schema/lib/schema/post.js
++++ b/node_modules/wordexpress-schema/lib/schema/post.js
+@@ -20,7 +20,7 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
+ 
+ function _toConsumableArray(arr) { if (Array.isArray(arr)) { for (var i = 0, arr2 = Array(arr.length); i < arr.length; i++) { arr2[i] = arr[i]; } return arr2; } else { return Array.from(arr); } }
+ 
+-var Post = '\n  type Post {\n    id: Int\n    post_title: String\n    post_content: String\n    post_excerpt: String\n    post_status: String\n    post_type: String\n    post_name: String\n    post_parent: Int\n    post_date: String\n    menu_order: Int\n    layout: Postmeta\n    thumbnail: Thumbnail\n    categories: [Category]\n    post_meta(keys: [MetaType], after: String, first: Int, before: String, last: Int): [Postmeta]\n    author: User\n  }\n';
++var Post = '\n  type Post {\n    id: Int\n    post_title: String\n    post_content: String\n    post_excerpt: String\n    post_status: String\n    post_type: String\n    post_name: String\n    post_parent: Int\n    post_date: String\n    menu_order: Int\n    layout: Postmeta\n    thumbnail: Thumbnail\n    categories(taxonomy: String = "category"): [Category]\n    post_meta(keys: [MetaType], after: String, first: Int, before: String, last: Int): [Postmeta]\n    author: User\n  }\n';
+ 
+ exports.default = function () {
+   return [Post, _postmeta2.default, _user2.default].concat(_toConsumableArray(_thumbnail2.default));
 diff --git a/node_modules/wordexpress-schema/lib/schema/schema.js b/node_modules/wordexpress-schema/lib/schema/schema.js
 index 9d8340e..bf8e94b 100644
 --- a/node_modules/wordexpress-schema/lib/schema/schema.js
