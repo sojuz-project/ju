@@ -5,7 +5,7 @@ const INDEX = process.env.INDEX || 'sojuz';
 
 const esclient = new elasticsearch.Client({
   host: process.env.ELASTICURL || 'elasticsearch:9200',
-  log: 'trace',
+  // log: 'trace',
 });
 
 const parseAttrs = (c) => {
@@ -41,63 +41,179 @@ const elasticPing = (module.exports.elasticPing = () => {
 });
 setTimeout(elasticPing, 4000);
 
-module.exports.elasticQuery = {
-  // eslint-disable-next-line complexity
-  search: async (_, { query, ids, post_type, limit, skip, order, terms, parent }) => {
-    const qs = {
-      query: {
-        bool: {},
+const cName = () => {
+  try {
+    throw new Error();
+  } catch (e) {
+    try {
+      return e.stack.split('at ')[3].split(' ')[0];
+    } catch (e) {
+      return '';
+    }
+  }
+};
+
+const buildQuery = (
+  { query, ids, id, post_type, post_name, limit, skip, order, terms, parent, filters, cap },
+  userId
+) => {
+  const caller = cName();
+  console.log(caller);
+  const qs = {
+    query: {
+      bool: {
+        must: [],
+        filter: [],
       },
+    },
+    sort: [],
+  };
+  // Protected or not
+  if (cap) {
+    if (userId && userId != cap) {
+      throw new Error('Not authorized!');
+    }
+    qs.query.bool.filter.push({
+      term: {
+        caps: cap,
+      },
+    });
+  } else {
+    qs.query.bool.filter.push({
+      term: {
+        protected: false,
+      },
+    });
+  }
+  //search by query sting
+  if (query && query.length) {
+    qs.query.bool.must.push({
+      multi_match: {
+        query,
+        fields: ['post_title', 'post_content'],
+      },
+    });
+  }
+  // Post by it's name
+  if (post_name && post_name.length) {
+    qs.query.bool.must.push({
+      bool: {
+        should: {
+          match_phrase: {
+            post_name,
+          },
+        },
+      },
+    });
+  }
+  // Pagination
+  if (limit || 'queryPost' == caller) {
+    qs.size = limit ? limit : 1;
+    qs.from = skip ? skip : 0;
+  }
+  // Post type filter
+  if (post_type && post_type.length) {
+    qs.query.bool.filter.push({
+      term: {
+        post_type,
+      },
+    });
+  }
+  // Sort results
+  if (order) {
+    qs.sort.push({
+      [order.orderBy]: {
+        order: order.direction,
+      },
+    });
+  }
+  // Default sort by date
+  if ('queryPost' != caller) {
+    qs.sort.push({
+      post_date: { order: 'desc' },
+    });
+  }
+  // Terms query
+  if (terms && terms.length) {
+    qs.query.bool.filter.push({
+      nested: {
+        path: 'categories',
+        query: {
+          bool: {
+            must: [
+              {
+                terms: {
+                  'categories.slug': terms,
+                },
+              },
+            ],
+          },
+        },
+      },
+    });
+  }
+  // Children query
+  if (parent >= 0) {
+    qs.query.bool.filter.push({
+      term: {
+        post_parent: parent,
+      },
+    });
+  }
+  // Post IDs query
+  if (ids && ids.length) {
+    qs.query.bool.filter.push({
+      terms: {
+        ID: ids,
+      },
+    });
+  }
+  if (id) {
+    qs.query.bool.filter.push({
+      term: {
+        ID: id,
+      },
+    });
+  }
+  // Meta query
+  if (filters && filters.length) {
+    const rawFilters = filters
+      .replace('?', '')
+      .split('&')
+      .map((e) => e.split('=')); // [['filed_name_from', 'value], ...]
+    const parsedFilters = rawFilters.map((e) => {
+      const first = e.shift();
+      return [...first.split('_'), e.shift()];
+    }); // [['field', 'name', 'from', 'value'], ...]
+    const mq = {
+      post_meta: [],
+      post_meta_num: [],
     };
-    if (query) {
-      qs.query.bool.should = [
-        {
+
+    parsedFilters.map((e) => {
+      const fq = {};
+      const [val, type, ...rest] = e.reverse();
+      const isNumeric = !isNaN(+val);
+      const path = isNumeric ? 'post_meta_num' : 'post_meta';
+      const field = [type, ...rest].reverse().join('_');
+
+      if ('search' == field) {
+        qs.query.bool.must.push({
           multi_match: {
-            query,
+            query: val,
             fields: ['post_title', 'post_content'],
           },
-        },
-      ];
-      qs.query.bool.filter = [
-        {
-          term: {
-            post_type: 'product',
-          },
-        },
-      ];
-    }
-    if (limit) {
-      qs.size = limit;
-      qs.from = skip ? skip : 0;
-    }
-    if (post_type && post_type.length) {
-      if (Array.isArray(qs.query.bool.filter)) {
-        qs.query.bool.filter.push({ term: { post_type: post_type } });
-      } else {
-        qs.query.bool.must = { term: { post_type: post_type } };
+        });
+        return;
       }
-    }
-    if (order) {
-      const sort = {};
-      sort[order.orderBy] = {
-        order: order.direction,
-      };
-      qs.sort = [sort];
-    }
-    if (Array.isArray(qs.sort)) {
-      qs.sort.push({
-        post_date: { order: 'desc' },
-      });
-    } else {
-      qs.sort = [
-        {
-          post_date: { order: 'desc' },
-        },
-      ];
-    }
-    if (terms && terms.length) {
-      const termsQuery = [
-        {
+
+      if ('page' == field) {
+        return;
+      }
+
+      if ('term' == field) {
+        const tms = val.split(',').map((e) => e.split('|').pop());
+        qs.query.bool.filter.push({
           nested: {
             path: 'categories',
             query: {
@@ -105,120 +221,150 @@ module.exports.elasticQuery = {
                 must: [
                   {
                     terms: {
-                      'categories.slug': terms,
+                      'categories.slug': tms,
                     },
                   },
                 ],
               },
             },
           },
-        },
-      ];
-      if (Array.isArray(qs.query.bool.filter)) {
-        qs.query.bool.filter.push(termsQuery);
-      } else {
-        qs.query.bool.must = termsQuery;
+        });
+        return;
       }
-    }
-    if (parent >= 0) {
-      const parentQuery = {
-        term: {
-          post_parent: parent,
-        },
-      };
-      if (Array.isArray(qs.query.bool.filter)) {
-        qs.query.bool.filter.push(parentQuery);
-      } else {
-        qs.query.bool.filter = [qs.query.bool.filter, parentQuery];
-      }
-    }
-    if (ids && ids.length) {
-      const idsQuery = {
-        terms: {
-          ID: ids,
-        },
-      };
-      if (Array.isArray(qs.query.bool.filter)) {
-        qs.query.bool.filter.push(idsQuery);
-      } else {
-        qs.query.bool.filter = [qs.query.bool.filter, idsQuery];
-      }
-    }
-    const {
-      hits: { hits = [] },
-    } = await esclient.search({
-      index: INDEX,
-      body: qs,
-    });
-    // eslint-disable-next-line no-underscore-dangle
-    return hits.map((hit) => hit._source);
-  },
-  // eslint-disable-next-line complexity
-  queryPost: async (_, { id, post_name, post_type, parent }) => {
-    const qs = {
-      size: 1,
-      query: {
-        bool: {},
-      },
-    };
-    if (post_name) {
-      qs.query.bool = {
-        filter: {
-          bool: {
-            should: {
-              match_phrase: {
-                post_name,
+
+      // Range query for numeric metas
+      if (isNumeric) {
+        let op;
+        switch (type) {
+          case 'from':
+            op = 'gte';
+            break;
+          case 'to':
+            op = 'lte';
+            break;
+          case 'fromto':
+            mq[path].push(
+              {
+                range: {
+                  [`${path}.${field.replace('fromto', 'from')}`]: {
+                    gte: val,
+                  },
+                },
               },
+              {
+                range: {
+                  [`${path}.${field.replace('fromto', 'to')}`]: {
+                    gte: val,
+                  },
+                },
+              }
+            );
+            return;
+          // break;
+          default:
+            op = 'eq';
+        }
+        fq.range = {
+          [`${path}.${field}`]: {
+            [op]: val,
+          },
+        };
+      }
+      // Terms query for non numeric metas
+      else {
+        fq.match = { [`${path}.${field}`]: val };
+      }
+      mq[path].push(fq);
+    });
+    // Build nested queries
+    Object.keys(mq).map((k) => {
+      if (mq[k].length) qs.query.bool.filter.push({
+        nested: {
+          path: k,
+          query: {
+            bool: {
+              must: mq[k],
             },
           },
         },
-      };
-    }
-    if (parent >= 0) {
-      const parentQuery = {
-        term: {
-          post_parent: parent,
-        },
-      };
+      });
+    });
+  }
+  // Show complete queryString
+  // console.dir(qs, { depth: null });
+  console.log(JSON.stringify(qs));
+  return qs;
+};
 
-      if (Array.isArray(qs.query.bool.filter)) {
-        qs.query.bool.filter.push(parentQuery);
-      } else {
-        qs.query.bool.filter = [qs.query.bool.filter, parentQuery];
-      }
-    }
-    if (id) {
-      qs.query.bool.must = [
-        {
-          term: {
-            ID: id,
-          },
-        },
-      ];
-    }
-    if (post_type) {
-      qs.query.bool = {
-        filter: {
-          term: {
-            post_type,
-          },
-        },
-      };
-    }
+module.exports.elasticQuery = {
+  search: async (_, params, { userId }) => {
+    const { lang = '' } = params;
+    console.log('user', userId);
+    // Build query
+    const qs = buildQuery(params, userId);
+    // Execute the query
     const {
       hits: { hits = [] },
     } = await esclient.search({
-      index: INDEX,
+      index: INDEX + lang,
       body: qs,
     });
-    if (hits.length) {
-      // eslint-disable-next-line no-underscore-dangle
-      return hits[0]._source;
-    } else {
-      throw new Error('No matched object(s)');
+
+    // eslint-disable-next-line no-underscore-dangle
+    return hits.map((hit) => hit._source);
+  },
+
+  count: async (_, params, { userId }) => {
+    // Build query
+    const { sort, size, from, ...qs } = buildQuery(params, userId);
+    const { lang = '' } = params;
+
+    // Execute the query
+    const { count } = await esclient.count({
+      index: INDEX + lang,
+      body: qs,
+    });
+    return count;
+  },
+
+  queryPost: async (_, params, { userId }) => {
+    const { lang = '' } = params;
+    const qs = buildQuery(params, userId);
+
+    try {
+      const {
+        hits: { hits = [] },
+      } = await esclient.search({
+        index: INDEX + lang,
+        body: qs,
+      });
+
+      if (hits.length) {
+        // eslint-disable-next-line no-underscore-dangle
+        return hits[0]._source;
+      } else {
+        throw new Error('No matched object(s)');
+      }
+    } catch (e) {
+      if ('NotFound' == e.displayName && lang) {
+        // console.log(e);
+        const {
+          hits: { hits = [] },
+        } = await esclient.search({
+          index: INDEX,
+          body: qs,
+        });
+
+        if (hits.length) {
+          // eslint-disable-next-line no-underscore-dangle
+          return hits[0]._source;
+        } else {
+          throw new Error('No matched object(s)');
+        }
+      }
     }
   },
-  suggest: async (_, { query }) => {
+  suggest: async (_, { query, lang = '' }) => {
     const hl = {
       highlight: {
         pre_tag: '<em>',
@@ -231,7 +377,7 @@ module.exports.elasticQuery = {
       // min_word_length: 3,
     };
     const { suggest: hits } = await esclient.search({
-      index: INDEX,
+      index: INDEX + lang,
       body: {
         query: {
           bool: {
@@ -332,7 +478,7 @@ module.exports.elasticTypes = {
     post_meta: (root, { fields = [] }) => {
       const { post_meta } = root;
       const metaKeys = post_meta ? Object.keys(post_meta) : [];
-      // eslint-disable-next-line complexity
+
       metaKeys.map((key) => {
         if ('_product_image_gallery' == key) {
           post_meta[key] = post_meta[key].split(',').map((e) => parseInt(e));
@@ -376,7 +522,10 @@ module.exports.elasticTypes = {
       return relatedPosts.map((hit) => hit._source);
     },
     blocks: ({ blocks }) => {
-      return blocks.filter((b) => Boolean(b.blockName)).map(parseAttrs);
+      console.log(blocks);
+      return Object.values(JSON.parse(blocks))
+        .filter((b) => Boolean(b.blockName))
+        .map(parseAttrs);
     },
   },
 };

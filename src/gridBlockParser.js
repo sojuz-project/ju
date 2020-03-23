@@ -6,7 +6,7 @@ const classMap = (entries) =>
     .map(([key, value]) => `${value}-${key}`)
     .join(' ');
 
-// eslint-disable-next-line complexity
+
 const addAttrs = (newAttrs = {}, block = {}, k = 0) => {
   newAttrs.attrs = {
     ...(newAttrs.attrs || {}),
@@ -37,7 +37,7 @@ const contentParse = (content, tagName = false) => (tagName ? `<${tagName}>${con
 
 module.exports = async (blocks, blockName = '', schema, { page, postSlug, catSlug } = {}, ctx) => {
   const value = await Promise.all(
-    // eslint-disable-next-line complexity
+    
     blocks.map(async (block, i) => {
       if (block.blockName == blockName) {
         const skip = ((page || 1) - 1) * block.attrs.content.length;
@@ -79,7 +79,7 @@ module.exports = async (blocks, blockName = '', schema, { page, postSlug, catSlu
               attrs: {
                 style: block.attrs.style.section,
               },
-              // eslint-disable-next-line complexity
+              
               innerBlocks: columns.map((column, k) => {
                 const { attrs: attrsToAdd, blockName = 'core/columns' } = addAttrs(column, block, k);
 

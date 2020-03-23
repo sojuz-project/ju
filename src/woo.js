@@ -31,7 +31,7 @@ try {
 const STOCK = 'stockChannel';
 const pubsub = new PubSub();
 
-// eslint-disable-next-line complexity
+
 const parseSession = async (sessValues) => {
   for (ob in sessValues) {
     if ('cookies' === ob) continue;
@@ -197,7 +197,7 @@ module.exports.wooMutation = {
         console.log('checkoutError', error.response.data);
       });
   },
-  register: (_, { user }) => {
+  customer_register: (_, { user }) => {
     const data = user;
     return WooCommerce.post('customers', data)
       .then((response) => {

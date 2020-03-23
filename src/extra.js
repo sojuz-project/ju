@@ -48,7 +48,6 @@ const ExtraQuery = gql`
     filters(taxonomy: String, ids: String = "", metas: [MetaType]): [FilterResult]
     bookmarks: [Post]!
     terms(taxonomies: [Int]): [Post]
-    count(post_type: [String], userId: Int, terms: [String]): Int
     relatedPosts(name: String!): [ElasticPost]
     categories(name: String = "category"): [Category]!
     get_order(orderId: Int): JSON
@@ -65,12 +64,33 @@ const ExtraQuery = gql`
       parent: Int
       # userId: Int
       terms: [String]
+      filters: String
+      lang: String
+      cap: Int
     ): [ElasticPost]
-    queryPost(id: Int, post_name: String, post_type: String, parent: Int): ElasticPost
-    suggest(query: String!, post_type: [String], userId: Int, terms: [String]): SuggestionResult
+    count(
+      query: String
+      ids: [Int]
+      post_type: String
+      parent: Int
+      terms: [String]
+      filters: String
+      lang: String
+      cap: Int
+    ): Int
+    queryPost(
+      id: Int
+      role: String
+      post_name: String
+      post_type: String
+      parent: Int
+      lang: String
+      cap: Int
+    ): ElasticPost
+    suggest(query: String!, post_type: [String], userId: Int, terms: [String], lang: String): SuggestionResult
     my_profile: Profile
     get_downloads: [Downloads]
-    form(name: String!): FormSchema
+    form(name: String!): FormSchema @cacheControl(maxAge: 2)
   }
   type ElasticPost {
     ID: Int
@@ -84,7 +104,8 @@ const ExtraQuery = gql`
     menu_order: Int
     post_type: String
     likes: Int
-    post_meta(fields: [MetaType]): JSON
+    post_meta(fields: [MetaType]): JSON @cacheControl(maxAge: 2)
+    post_meta_num(fields: [MetaType]): JSON @cacheControl(maxAge: 2)
     thumbnail: JSONObject
     categories: JSON
     author: [JSON]
@@ -126,6 +147,7 @@ const ExtraQuery = gql`
   type Mutation {
     login(username: String!, password: String!): JSONObject!
     register(user: UserInput!): JSON
+    customer_register(user: UserInput!): JSON
     add_to_cart(item: LineItem!, cart_key: String): JSON
     clear_cart(cart_key: String): JSON
     remove_from_cart(item: String!, cart_key: String): JSON
@@ -360,49 +382,49 @@ const ExtraResolvers = {
 
       return categories.map((cat) => ({ ...cat, thumbnail: thumbnails.find(({ id }) => id == cat.thumbnail) }));
     },
-    async count(_, _ref) {
-      const post_type = _ref.post_type,
-        userId = _ref.userId,
-        terms = _ref.terms ? _ref.terms : [];
+    // async count(_, _ref) {
+    //   const post_type = _ref.post_type,
+    //     userId = _ref.userId,
+    //     terms = _ref.terms ? _ref.terms : [];
 
-      const where = {
-        post_status: 'publish',
-        post_type: _defineProperty({}, Op.in, ['post']),
-      };
+    //   const where = {
+    //     post_status: 'publish',
+    //     post_type: _defineProperty({}, Op.in, ['post']),
+    //   };
 
-      if (post_type) {
-        where.post_type = _defineProperty({}, Op.in, post_type);
-      }
+    //   if (post_type) {
+    //     where.post_type = _defineProperty({}, Op.in, post_type);
+    //   }
 
-      if (userId) {
-        where.post_author = userId;
-      }
+    //   if (userId) {
+    //     where.post_author = userId;
+    //   }
 
-      if (terms.length) {
-        connection.models.wp_terms.hasMany(connection.models.wp_term_relationships, { foreignKey: 'term_taxonomy_id' });
-        connection.models.wp_term_relationships.belongsTo(connection.models.wp_terms, {
-          foreignKey: 'term_taxonomy_id',
-        });
-        const termsRes = await connection.models.wp_terms.findAll({
-          where: {
-            slug: _defineProperty({}, Op.in, terms),
-          },
-          include: [
-            {
-              model: connection.models.wp_term_relationships,
-            },
-          ],
-        });
-        const postIds = termsRes.map(({ dataValues: term }) => {
-          return term.wp_term_relationships.map(({ dataValues: relation }) => {
-            return relation.object_id;
-          });
-        });
-        where.ID = _defineProperty({}, Op.in, postIds.flat());
-      }
-      ret = await connection.models.wp_posts.count({ where });
-      return ret;
-    },
+    //   if (terms.length) {
+    //     connection.models.wp_terms.hasMany(connection.models.wp_term_relationships, { foreignKey: 'term_taxonomy_id' });
+    //     connection.models.wp_term_relationships.belongsTo(connection.models.wp_terms, {
+    //       foreignKey: 'term_taxonomy_id',
+    //     });
+    //     const termsRes = await connection.models.wp_terms.findAll({
+    //       where: {
+    //         slug: _defineProperty({}, Op.in, terms),
+    //       },
+    //       include: [
+    //         {
+    //           model: connection.models.wp_term_relationships,
+    //         },
+    //       ],
+    //     });
+    //     const postIds = termsRes.map(({ dataValues: term }) => {
+    //       return term.wp_term_relationships.map(({ dataValues: relation }) => {
+    //         return relation.object_id;
+    //       });
+    //     });
+    //     where.ID = _defineProperty({}, Op.in, postIds.flat());
+    //   }
+    //   ret = await connection.models.wp_posts.count({ where });
+    //   return ret;
+    // },
     terms(_, { taxonomies }) {
       if (!taxonomies) {
         return getPosts();
@@ -595,14 +617,14 @@ const ExtraResolvers = {
           throw e.response.data;
         });
     },
-    // register: (_, { user: userData }) => {
-    //   return rest()
-    //     .post('/wp/v2/users', userData)
-    //     .then((ret) => ret.data)
-    //     .catch((e) => {
-    //       throw e.response.data;
-    //     });
-    // },
+    register: (_, { user: userData }) => {
+      return rest()
+        .post('/wp/v2/users', userData)
+        .then((ret) => ret.data)
+        .catch((e) => {
+          throw e.response.data;
+        });
+    },
     ...wooMutation,
     like: async (_, { post }, { userId }) => {
       // console.log(connection.models.wp_postmeta);
@@ -714,13 +736,14 @@ const ExtraResolvers = {
         throw new Error('Not logged in!');
       }
     },
-    form: (_, { action, fields }) => {
+    form: (_, { action, fields }, auth) => {
       const builtInActions = Object.keys(ExtraResolvers.Mutation);
       const params = JSON.parse(fields);
       let data = false;
+      const { token } = auth;
       // console.log('FM', builtInActions, params);
       if (builtInActions.includes(action)) {
-        data = ExtraResolvers.Mutation[action](_, params);
+        data = ExtraResolvers.Mutation[action](_, ('register' == action) ? {user: params}: params, auth);
         return {
           status: 200,
           messages: [],
@@ -729,11 +752,10 @@ const ExtraResolvers = {
         };
         // console.log(data);
       } else {
-        const axios = require('axios');
         const { stringify } = require('querystring');
-        return axios
+        return rest(token, '/')
           .post(
-            'http://wordpress/backend/wp-admin/admin-ajax.php',
+            '/wp-admin/admin-ajax.php',
             stringify({
               ...params,
               action,
@@ -745,19 +767,21 @@ const ExtraResolvers = {
             }
           )
           .then((res) => {
+            // console.log(res);
             return {
               status: res.status,
-              messages: [data.data],
+              messages: res.data.messages || [],
               cb: action,
               data: res.data,
             };
           })
           .catch((e) => {
+            // console.log(e);
             return {
-              status: e.status,
-              messages: [e.data],
+              status: e.response.status,
+              messages: [e.response.data],
               cb: action,
-              data: e.data,
+              data: e.response.data,
             };
           });
       }
