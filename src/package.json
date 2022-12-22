@@ -12,7 +12,7 @@
     "elasticsearch": "^16.4.0",
     "graphql": "^14.3.1",
     "graphql-type-json": "^0.3.0",
-    "jsonwebtoken": "^8.5.1",
+    "jsonwebtoken": "^9.0.0",
     "patch-package": "^6.1.2",
     "lodash.merge": "^4.6.2",
     "php-serialize": "^3.0.1",
